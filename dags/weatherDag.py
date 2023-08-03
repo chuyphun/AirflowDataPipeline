@@ -1,98 +1,107 @@
-from datetime import datetime, timedelta
-from airflow import DAG
-from airflow.operators.bash_operator import BashOperator
-from airflow.operators import PythonOperator
-import os
-from airflow.hooks import PostgresHook
 import json
+#import os
+from datetime import datetime, timedelta
+from pathlib import Path
+
 import numpy as np
+from airflow import DAG
+from airflow.operators.python import PythonOperator
+from airflow.operators.bash import BashOperator
+from airflow.providers.postgres.hooks.postgres import PostgresHook
 
 
 def load_data(ds, **kwargs):
-	"""
-	Processes the json data, checks the types and enters into the
-	Postgres database.
-	"""
+    """
+    Process the json data, check data types and insert into the
+    Postgres database.
+    """
 
-	pg_hook  = PostgresHook(postgres_conn_id='weather_id')
+    pg_hook  = PostgresHook(postgres_conn_id="cwb_id")
 
-	file_name = str(datetime.now().date()) + '.json'
-	tot_name = os.path.join(os.path.dirname(__file__),'src/data', file_name)
+    file_name = f'{datetime.now().date()}.json'
+    tot_name = Path(__file__).parent/f'src/data/{file_name}'
 
-	# open the json datafile and read it in
-	with open(tot_name, 'r') as inputfile:
-		doc = json.load(inputfile)
+    with open(tot_name, "r", encoding="utf-8") as f:
+        general_weather = json.load(f)
 
-	# transform the data to the correct types and convert temp to celsius
-	city        = str(doc['name'])
-	country     = str(doc['sys']['country'])
-	lat         = float(doc['coord']['lat'])
-	lon         = float(doc['coord']['lon'])
-	humid       = float(doc['main']['humidity'])
-	press       = float(doc['main']['pressure'])
-	min_temp    = float(doc['main']['temp_min']) - 273.15
-	max_temp    = float(doc['main']['temp_max']) - 273.15
-	temp        = float(doc['main']['temp']) - 273.15
-	weather     = str(doc['weather'][0]['description'])
-	todays_date = datetime.now().date()
+    i = 0
+    info_i = general_weather["records"]["location"][i]
+    city = str(info_i["locationName"])
+    weather = "##".join(
+        d["parameter"]["parameterName"]
+        for d in info_i["weatherElement"][0]["time"]
+    )
+    pops = [
+        int(d["parameter"]["parameterName"])
+        for d in info_i["weatherElement"][1]["time"]
+    ]
+    pop = sum(pops)/len(pops)
 
-	# check for nan's in the numeric values and then enter into the database
-	valid_data  = True
-	for valid in np.isnan([lat, lon, humid, press, min_temp, max_temp, temp]):
-		if valid is False:
-			valid_data = False
-			break;
+    min_temps = [
+        int(d["parameter"]["parameterName"])
+        for d in info_i["weatherElement"][2]["time"]
+    ]
+    min_temp = sum(min_temps)/len(min_temps)
 
-	row  =  (city, country, lat, lon, todays_date, humid, press, min_temp,
-			max_temp, temp, weather)
+    max_temps = [
+        int(d["parameter"]["parameterName"])
+        for d in info_i["weatherElement"][4]["time"]
+    ]
+    max_temp = sum(max_temps)/len(max_temps)
 
-	insert_cmd = """INSERT INTO weather_table 
-					(city, country, latitude, longitude,
-					todays_date, humidity, pressure, 
-					min_temp, max_temp, temp, weather)
-					VALUES
-					(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s);"""
+    todays_date = datetime.now().date()
 
-	if valid_data is True:
-		pg_hook.run(insert_cmd, parameters=row)
+    row = (city, weather, pop, min_temp, max_temp, todays_date)
+
+    insert_cmd = """INSERT INTO cwb_general
+                    (city, weather, pop, min_temp, max_temp, todays_date)
+                    VALUES
+                    (%s, %s, %s, %s, %s, %s);"""
+
+    pg_hook.run(insert_cmd, parameters=row)
 
 
 # Define the default dag arguments.
 default_args = {
-		'owner' : 'Mike',
-		'depends_on_past' :False,
-		'email' :['mdh266@gmail.com'],
-		'email_on_failure': False,
-		'email_on_retry': False,
-		'retries': 5,
-		'retry_delay': timedelta(minutes=1)
-		}
+    "owner" : "phunc20",
+    "depends_on_past": False,
+    "email": "wucf20@gmail.com",
+    "email_on_failure": True,
+    "email_on_retry": True,
+    "retries": 5,
+    "retry_delay": timedelta(minutes=1),
+}
 
 
 # Define the dag, the start date and how frequently it runs.
 # I chose the dag to run everday by using 1440 minutes.
 dag = DAG(
-		dag_id='weatherDag',
-		default_args=default_args,
-		start_date=datetime(2017,8,24),
-		schedule_interval=timedelta(minutes=1440))
+    dag_id="weatherDag",
+    default_args=default_args,
+    start_date=datetime(2023,8,2),
+    schedule=timedelta(days=1),
+    template_searchpath=[Path.cwd()],
+)
 
-
-# First task is to query get the weather from openweathermap.org.
 task1 = BashOperator(
-			task_id='get_weather',
-			bash_command='python ~/airflow/dags/src/getWeather.py' ,
-			dag=dag)
+    task_id="get_weather",
+    bash_command=f'python {Path(__file__).parent}/src/getWeather.py',
+    dag=dag,
+)
 
+task2 = BashOperator(
+    task_id="make_table",
+    bash_command=f'python {Path(__file__).parent}/src/makeTable.py',
+    dag=dag,
+)
 
-# Second task is to process the data and load into the database.
-task2 =  PythonOperator(
-			task_id='transform_load',
-			provide_context=True,
-			python_callable=load_data,
-			dag=dag)
+task3 =  PythonOperator(
+    task_id="transform_load",
+    python_callable=load_data,
+    dag=dag,
+)
 
-# Set task1 "upstream" of task2, i.e. task1 must be completed
-# before task2 can be started.
-task1 >> task2 
-
+task1 >> task2 >> task3
+# Equiv. to
+#task2.set_upstream(task1)
+#task3.set_upstream(task2)

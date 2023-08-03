@@ -2,44 +2,42 @@ from sqlalchemy import create_engine
 from sqlalchemy_utils import database_exists, create_database
 import psycopg2
 
+
 def make_database():
     """
     Make the Postgres database and create the table.
     """
+    dbname = "airflow_db"
+    username = "phunc20"
+    tablename = "cwb_general"
 
-	dbname    = 'WeatherDB'
-	username  = 'Mike'
-	tablename = 'weather_table'
+    engine = create_engine(
+        f'postgresql+psycopg2://{username}@localhost/{dbname}'
+    )
 
-    # Note: I didn't make a password.
-	engine    = create_engine('postgresql+psycopg2://%s@localhost/%s'%(username,dbname))
+    if not database_exists(engine.url):
+        create_database(engine.url)
 
-	if not database_exists(engine.url):
-   		create_database(engine.url)
+    conn = psycopg2.connect(database=dbname, user=username)
 
-	conn = psycopg2.connect(database = dbname, user = username)
+    cur = conn.cursor()
 
-	curr = conn.cursor()
+    create_table = (
+        f"""CREATE TABLE IF NOT EXISTS {tablename}
+        (
+            city         TEXT,
+            weather      TEXT,
+            pop          REAL,
+            min_temp     REAL,
+            max_temp     REAL,
+            todays_date  DATE
+       )
+       """
+    )
 
-	create_table = """CREATE TABLE IF NOT EXISTS %s
-                (
-                    city         TEXT, 
-                    country      TEXT,
-                    latitude     REAL,
-                    longitude    REAL,
-                    todays_date  DATE,
-                    humidity     REAL,
-                    pressure     REAL,
-                    min_temp     REAL,
-                    max_temp     REAL,
-                    temp         REAL,
-                    weather      TEXT
-                )
-                """ % tablename
-
-	curr.execute(create_table)
-	conn.commit()
-	conn.close()
+    cur.execute(create_table)
+    conn.commit()
+    conn.close()
 
 if __name__ == "__main__":
-	make_database()
+    make_database()

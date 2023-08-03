@@ -1,35 +1,51 @@
-import requests
-import config as C 
 import json
-from datetime import datetime 
 import os
+from datetime import datetime
+from pathlib import Path
+
+import requests
+from dotenv import (
+    dotenv_values,
+    load_dotenv,
+)
+
 
 def get_weather():
-	"""
-	Query openweathermap.com's API and to get the weather for
-	Brooklyn, NY and then dump the json to the /src/data/ directory 
-	with the file name "<today's date>.json"
-	"""
+    """
+    Query Taiwan CWB API and to get the weather for
+    嘉義縣 and then dump the json to the /src/data/ directory
+    with the file name "{todays_date}.json"
+    """
 
-	# My API key is defined in my config.py file.
-	paramaters = {'q': 'Brooklyn, USA', 'appid':C.API_KEY}
+    # My API key is defined in .env or .env.secret file(s)
+    load_dotenv()
+    config = os.environ
+    #config = {
+    #    **dotenv_values(".env.shared"),
+    #    **dotenv_values(".env.secret"),
+    #}
+    paramaters = {
+        "Authorization": config["CWB_API_KEY"],
+        "format": "json",
+    }
 
-	result     = requests.get("http://api.openweathermap.org/data/2.5/weather?", paramaters)
+    general_url = (
+        f'{config["CWB_RESTFUL_API_URL"]}/'
+        f'{config["GENERAL_WEATHER_36_HOUR_DATAID"]}?'
+        #f'{config["CHANGHUA_WEATHER_2_DAY_DATAID"]}?'
+    )
+    result = requests.get(general_url, paramaters)
 
-	# If the API call was sucessful, get the json and dump it to a file with 
-	# today's date as the title.
-	if result.status_code == 200 :
+    if result.status_code == 200 :
+        json_data = result.json()
+        file_name  = str(datetime.now().date()) + '.json'
+        tot_name   = Path(__file__).parent/f'data/{file_name}'
 
-		# Get the json data 
-		json_data = result.json()
-		file_name  = str(datetime.now().date()) + '.json'
-		tot_name   = os.path.join(os.path.dirname(__file__), 'data', file_name)
-
-		with open(tot_name, 'w') as outputfile:
-			json.dump(json_data, outputfile)
-	else :
-		print "Error In API call."
+        with open(tot_name, "w", encoding="utf-8") as f:
+            json.dump(json_data, f, ensure_ascii=False)
+    else :
+        print(result.text)
 
 
 if __name__ == "__main__":
-	get_weather()
+    get_weather()
